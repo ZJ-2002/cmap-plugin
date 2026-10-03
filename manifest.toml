@@ -1,0 +1,68 @@
+schema_version = 1
+plugin_name = "cmap"
+
+[image]
+reference = "localhost/autonomics/biotools-py@sha256:21e14c1582a9d4c261c0a23a11864293313ee2b49b9b7d85bcabc89210b48c7e"
+tag = "v1"
+upstream = "L1000/CMap GCT convention (Subramanian 2017, R28)"
+license = "CC-BY-4.0 (CMap data)"
+
+# 说明：LINCS/CMap 连通性比较（方案 §18.2）。方向相容判断的引擎侧实现：
+# 疾病特征签名 vs 公共扰动特征谱，报告逆转/同向排名。不做细胞系外推结论
+# 的升级（§18.2：非肌肉细胞系结果是跨模型外推，需降级）。
+
+[[nodes]]
+kind = "cmap_connectivity"
+desc = "Rank reference perturbation signatures (GCT) against a query signature"
+doc = """
+输入：查询签名 TSV（input0：gene + value 两列，value 为有方向的量如 logFC，
+或 0/1 方向码）+ 参考特征谱 GCT（input1：L1000 约定，# 注释头 2 行 +
+id/desc 表头；分块读取，GB 级文件可控）。
+输出：cmap_scores.tsv —— signature_id/score/n_common/a_up/a_down
+（a_up/a_down 仅 metric=wcs 时非空）+ cmap.log。
+metric：
+- spearman —— 查询向量与每条参考谱的 Spearman ρ（默认，正=同向，负=逆转）；
+- pearson —— 同上换 Pearson；
+- wcs —— CMap 风格加权连通评分：取查询 |value| 排名前 up_n/down_n 基因，
+  a = 参考谱（降序位次缩放到 [0,1]）中该集合的平均位次，score = a_down - a_up
+  （查询上调基因在参考谱中排名越低 → score 越高 = 越逆转）。
+规则来源：§18.2——固定细胞类型/剂量/时间与聚合规则，不得从几十个条件里
+只挑最强逆转；本节点输出全部参考谱的完整排名，过滤决策在下游注册表。
+失败处理：GCT 头不符/无共同基因 → 退出 2。
+解释边界：表达逆转是方向相容证据，不是药效验证（§18.2）。
+"""
+timeout_secs = 14400
+artifact_prefix = "/artifacts/cmap_connectivity"
+
+[nodes.ports]
+inputs = [{ type = "file" }, { type = "file" }]
+outputs = [
+  { path = "cmap_scores.tsv", format = "cmap_scores" },
+  { path = "cmap.log", format = "cmap_log" },
+]
+
+[nodes.params]
+metric = { type = "string", default = "spearman", doc = "spearman | pearson | wcs" }
+gene_col = { type = "string", default = "gene", doc = "query TSV gene column" }
+value_col = { type = "string", default = "value", doc = "query TSV value column" }
+up_n = { type = "int", default = 150, min = 1.0, doc = "wcs: top up-regulated genes" }
+down_n = { type = "int", default = 150, min = 1.0, doc = "wcs: top down-regulated genes" }
+chunk = { type = "int", default = 2000, min = 100.0, doc = "GCT rows per chunk" }
+
+[nodes.command]
+interpreter = "python3"
+script_file = "scripts/cmap_connectivity.py"
+
+[nodes.command.env]
+CMAP_METRIC = "{{ metric }}"
+CMAP_GENE_COL = "{{ gene_col }}"
+CMAP_VALUE_COL = "{{ value_col }}"
+CMAP_UP_N = "{{ up_n }}"
+CMAP_DOWN_N = "{{ down_n }}"
+CMAP_CHUNK = "{{ chunk }}"
+
+[nodes.resources]
+network = "isolated"
+cpus = 4
+memory = "8g"
+pull_policy = "never"
