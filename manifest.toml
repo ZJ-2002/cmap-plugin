@@ -16,10 +16,13 @@ kind = "cmap_connectivity"
 desc = "Rank reference perturbation signatures (GCT) against a query signature"
 doc = """
 输入：查询签名 TSV（input0：gene + value 两列，value 为有方向的量如 logFC，
-或 0/1 方向码）+ 参考特征谱 GCT（input1：L1000 约定，# 注释头 2 行 +
-id/desc 表头；分块读取，GB 级文件可控）。
+或 0/1 方向码）+ 参考特征谱（input1，魔数自动识别）：GCT 文本（#1.2 头）、
+GCTx（HDF5 /0/DATA/0 + META），两者各自的 .gz 压缩形态亦可直喂
+（gzipped GCTx 会先解压到 WORKDIR，LINCS Level5 解压后 ~20GB 级磁盘）。
+按签名【列】分块（完整基因集 × 列块），每条参考谱的得分建立在全部共同
+基因上（v2 修正：v1 按基因行分块会把同一签名拆成多个子集相关的行）。
 输出：cmap_scores.tsv —— signature_id/score/n_common/a_up/a_down
-（a_up/a_down 仅 metric=wcs 时非空）+ cmap.log。
+（a_up/a_down 仅 metric=wcs 时非空）+ cmap.log（source/形状/共同基因数自锚）。
 metric：
 - spearman —— 查询向量与每条参考谱的 Spearman ρ（默认，正=同向，负=逆转）；
 - pearson —— 同上换 Pearson；
@@ -28,10 +31,11 @@ metric：
   （查询上调基因在参考谱中排名越低 → score 越高 = 越逆转）。
 规则来源：§18.2——固定细胞类型/剂量/时间与聚合规则，不得从几十个条件里
 只挑最强逆转；本节点输出全部参考谱的完整排名，过滤决策在下游注册表。
-失败处理：GCT 头不符/无共同基因 → 退出 2。
-解释边界：表达逆转是方向相容证据，不是药效验证（§18.2）。
+失败处理：格式无法识别/GCT 头错/gctx 形状与元数据不符/共同基因 <10 → 退出 2。
+解释边界：表达逆转是方向相容证据，不是药效验证（§18.2）；LINCS gctx 行
+标识符是 Entrez ID，符号查询先用同目录 gene_info 映射（geo_suppl 可取）。
 """
-timeout_secs = 14400
+timeout_secs = 28800
 artifact_prefix = "/artifacts/cmap_connectivity"
 
 [nodes.ports]
