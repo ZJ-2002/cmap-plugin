@@ -7,8 +7,9 @@
 # 分块方向：按签名【列】分块（完整基因集 × 列块）——保证每条参考谱的
 # 得分/位次建立在全部共同基因上。按基因行分块会把同一签名拆成多个
 # 子集相关的行（历史缺陷，v2 修正）。
-# 统计口径：spearman/pearson 全基因相关；wcs 按查询 |value| 排名取
-# up_n/down_n，参考谱位次缩放 [0,1]，score = a_down - a_up（高 = 逆转）。
+# 统计口径：spearman/pearson 全基因相关；wcs 按查询带符号值取 up_n
+# （最正）/down_n（最负）基因，参考谱位次缩放 [0,1]，
+# score = a_down - a_up（高 = 逆转）。
 # 失败处理：格式无法识别/GCT 头错/gctx 形状与元数据不符/共同基因 <10 → 退出 2。
 # 解释边界：表达逆转≠药效；LINCS gctx 行标识符是 Entrez ID，符号查询需
 # 先用同目录 gene_info 映射（geo_suppl 可取）；非肌肉细胞系为跨模型外推（§18.2）。
@@ -125,6 +126,7 @@ else:
 results = []
 n_total = 0
 n_common_seen = None
+warned_overlap = False
 for j0 in range(0, n_cols, CHUNK):
     j1 = min(j0 + CHUNK, n_cols)
     block = block_of(j0, j1)
@@ -155,12 +157,21 @@ for j0 in range(0, n_cols, CHUNK):
         a_up = np.full(data.shape[1], np.nan)
         a_down = np.full(data.shape[1], np.nan)
     else:  # wcs
-        # up/down 集按查询 |value| 排名取（交集内排序，与全查询排名在
-        # 共同基因子集上一致）。
-        order = np.argsort(-np.abs(q))
+        # up/down 集按带符号值取（CMap 惯例）：up = 值最正的前 up_n，
+        # down = 值最负的后 down_n。v1 按 |value| 排（强幅度 vs 弱幅度）
+        # 是错误口径，已修；up_n+down_n ≥ 共同基因数时两集重叠，WARN 记录。
+        order = np.argsort(-q)
         common_list = np.array(common.astype(str).to_list())
         up_set = set(common_list[order[: min(UP_N, len(order))]])
-        down_set = set(common_list[order[-min(DOWN_N, len(order)):]])
+        down_set = set(common_list[order[len(order) - min(DOWN_N, len(order)):]]) if DOWN_N else set()
+        overlap = up_set & down_set
+        if overlap and not warned_overlap:
+            warned_overlap = True
+            print(
+                f"WARN wcs up/down sets overlap ({len(overlap)} genes); "
+                "increase the reference gene overlap or decrease up_n/down_n",
+                file=sys.stderr,
+            )
         # 参考谱按强度降序的相对位次，缩放到 [0,1]（1=最强）。
         ranks_desc = data.shape[0] - 1 - np.argsort(np.argsort(-data, axis=0), axis=0)
         scaled = ranks_desc / max(data.shape[0] - 1, 1)
